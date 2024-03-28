@@ -1,0 +1,23 @@
+{
+    "name": "Python 3.9 Development Container",
+    "context": "..", // Dockerfileがこのファイルと同じディレクトリにある場合は、"."に設定します
+    "dockerFile": "../Dockerfile",
+    "settings": { 
+      "terminal.integrated.shell.linux": "/bin/bash",
+      "python.pythonPath": "/usr/local/bin/python",
+      "python.linting.enabled": true,
+      "python.linting.pylintEnabled": true,
+      "python.formatting.autopep8Path": "/usr/local/bin/autopep8",
+      "python.formatting.blackPath": "/usr/local/bin/black",
+      "python.formatting.yapfPath": "/usr/local/bin/yapf",
+      "python.linting.flake8Path": "/usr/local/bin/flake8"
+    },
+    "extensions": [
+      "ms-python.python",
+      "ms-python.vscode-pylance"
+    ],
+    "forwardPorts": [8000], // 必要に応じて開発に必要なポートを追加
+    "postCreateCommand": "pip install -r requirements.txt", // コンテナ作成後に自動で実行されるコマンド
+    "remoteUser": "root" // Dockerfileまたはイメージで指定されたユーザー。必要に応じて変更してください。
+  }
+  
