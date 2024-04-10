@@ -78,3 +78,81 @@ class S4BM:
         """
 
         tau, gamma, alpha, rho, mu1, eta1, mu2, eta2 = self._initialize_parameters(data, data.size, K, C)
+
+    def _update_tau(data, tau, gamma, alpha, rho, eta, mu):
+        print('_update_tauを実行')
+        return tau
+    
+    def _update_gamma(gamma, categories, tau, alpha):
+        print('_update_gammaを実行')
+        return gamma
+    
+    def _update_rho(rho0, tau):
+        """
+        式(12)に基づいてブロックの割合ρを更新する。
+
+        Parameters:
+        - tau: 各ノードが各ブロックに属する確率を表す配列、形状は(n_nodes, n_blocks)
+        - rho0: ρの初期値を表す配列、形状は(n_blocks,)
+
+        Returns:
+        - rho: 更新されたブロックの割合を表す配列、形状は(n_blocks,)
+        """
+        # 各ブロックに対するノードの割り当て確率の合計を計算し、rho0を加算
+        rho = np.sum(tau, axis=0) + rho0
+        
+        return rho
+    
+    def update_eta(tau, data, eta0):
+        """
+        式(13)に基づいてブロック内のリンク確率ηを更新する。
+
+        Parameters:
+        - tau: 各ノードが各ブロックに属する確率を表す配列、形状は(n_nodes, n_blocks)
+        - data: ネットワークの隣接行列、形状は(n_nodes, n_nodes)。要素は1, -1, 0。
+        - eta0: ηの初期値、形状は(3,)。正のリンク、負のリンク、リンクなしの確率。
+
+        Returns:
+        - eta: 更新されたブロック内のリンク確率、形状は(3,)。
+        """
+        n_blocks = tau.shape[1]
+        eta = np.zeros_like(eta0)
+        for h in [-1, 0, 1]:  # リンクの種類: 負のリンク, リンクなし, 正のリンク
+            link_type = h + 1  # インデックス調整
+            for k in range(n_blocks):
+                for l in range(n_blocks):
+                    if k != l:
+                        continue
+                    mask = data == h
+                    eta[link_type] += np.sum(mask * np.dot(tau[:, k:k+1], tau[:, l:l+1].T))
+        eta += eta0
+        return eta
+    
+    def update_mu(tau, data, mu0):
+        """
+        式(14)に基づいてブロック間のリンク確率μを更新する。
+
+        Parameters:
+        - tau: 各ノードが各ブロックに属する確率を表す配列、形状は(n_nodes, n_blocks)
+        - data: ネットワークの隣接行列、形状は(n_nodes, n_nodes)。要素は1, -1, 0。
+        - mu0: μの初期値、形状は(3,)。正のリンク、負のリンク、リンクなしの確率。
+
+        Returns:
+        - mu: 更新されたブロック間のリンク確率、形状は(3,)。
+        """
+        n_blocks = tau.shape[1]
+        mu = np.zeros_like(mu0)
+        for h in [-1, 0, 1]:  # リンクの種類: 負のリンク, リンクなし, 正のリンク
+            link_type = h + 1  # インデックス調整
+            for k in range(n_blocks):
+                for l in range(n_blocks):
+                    if k == l:
+                        continue
+                    mask = data == h
+                    mu[link_type] += np.sum(mask * np.dot(tau[:, k:k+1], tau[:, l:l+1].T))
+        mu += mu0
+        return mu
+    
+    def _update_alpha(alpha):
+        print('_update_alphaを実行')
+        return alpha
