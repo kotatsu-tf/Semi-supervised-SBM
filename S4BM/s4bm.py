@@ -1,17 +1,24 @@
 import numpy as np
+from scipy.special import digamma, psi
 
 class S4BM:
-    def __init__(self, n_blocks, n_iter=2000, random_state=None):
+    def __init__(self, n_blocks=10, max_iter=2000, random_state=None):
         self.n_blocks = n_blocks
-        self.n_iter = n_iter
+        self.max_iter = max_iter
         self.random_state = random_state
 
     def fit(self, data, categories):
         # ノードの総数をdataの行数（または列数）から取得
         n_nodes = data.shape[0]
+        n_blocks = self.n_blocks
+        assigned_clusters = np.zeros((n_nodes, n_blocks))
                 
         # カテゴリ行列を作成
         category_matrix = self._create_category_matrix(categories, n_nodes)
+
+        # S4BLアルゴリズム実行（パラメータ更新）
+        assigned_clusters = self.S4BL(data, n_blocks, category_matrix)
+    
 
     
     def _create_category_matrix(self, category_list, n_nodes):
@@ -69,7 +76,7 @@ class S4BM:
         return tau, gamma, alpha, rho, mu1, eta1, mu2, eta2
 
     
-    def S4BL(self, data, K, C):
+    def _S4BL(self, data, K, C):
         """
         S4BMのパラメータ推定アルゴリズム。
         data: 隣接行列
@@ -78,16 +85,68 @@ class S4BM:
         """
 
         tau, gamma, alpha, rho, mu1, eta1, mu2, eta2 = self._initialize_parameters(data, data.size, K, C)
+        
 
-    def _update_tau(data, tau, gamma, alpha, rho, eta, mu):
-        print('_update_tauを実行')
+
+    def _update_tau(self, alpha, gamma, eta, mu, rho, data):
+        """
+        各ノードが各ブロックに属する確率τ（タウ）を更新する関数。
+
+        パラメータ:
+        - alpha (numpy.ndarray): ラベルとブロックの関連性を示すパラメータ、形状は (M, K)
+        - beta (numpy.ndarray): β値の計算結果、形状は (K,)
+        - gamma (numpy.ndarray): γ確率の行列、形状は (N, M)
+        - eta (numpy.ndarray): リンクが存在する確率、形状は (3,) (正、負、無リンク)
+        - mu (numpy.ndarray): 異なるブロック間のリンクが存在する確率、形状は (3,)
+        - rho (numpy.ndarray): 各ブロックの比率、形状は (K,)
+        - data (numpy.ndarray): 隣接行列、形状は (N, N)
+
+        戻り値:
+        - numpy.ndarray: 更新されたτ行列、形状は (N, K)
+        """
+        N, K = gamma.shape
+        tau = np.zeros((N, K))
+        beta = np.sum(np.exp(alpha), axis=0)
+        
+        # 全ノードに対して更新を行う
+        for i in range(N):
+            for k in range(K):
+                sum_gamma_alpha = np.dot(gamma[i], alpha[:, k])
+                beta_term = 1 / np.dot(beta, tau[i]) * beta[k]
+                tau_ik = psi(rho[k]) - psi(np.sum(rho)) + sum_gamma_alpha - beta_term
+                
+                for j in range(N):
+                    if i != j:
+                        tau_ik += np.sum(tau[j] * (digamma(eta) - digamma(np.sum(eta))) * data[i, j])
+                        tau_ik += np.sum(tau[j] * (digamma(mu) - digamma(np.sum(mu))) * (1 - data[i, j]))
+                
+                tau[i, k] = np.exp(tau_ik)
+        
+        # 正規化
+        tau /= np.sum(tau, axis=1, keepdims=True)
+        
         return tau
     
-    def _update_gamma(gamma, categories, tau, alpha):
-        print('_update_gammaを実行')
+    def _update_gamma(self, tau, alpha):
+        """
+        各ノードとラベルに対するγ（ガンマ）確率を更新する関数。
+
+        パラメータ:
+        - alpha (numpy.ndarray): αパラメータの行列で、形状は (M, K)。ラベルとブロックの関連性を示す。
+        - tau (numpy.ndarray): τ確率の行列で、形状は (N, K)。ノードが各ブロックに属する確率を示す。
+
+        戻り値:
+        - numpy.ndarray: 更新されたγ行列で、形状は (N, M)。
+        """
+        # 各ノードとラベルに対して指数部分を計算
+        exp_sum = np.exp(np.dot(tau, alpha.T))  # 形状 (N, M)
+        
+        # 確率として正規化
+        gamma = exp_sum / np.sum(exp_sum, axis=1, keepdims=True)
+        
         return gamma
     
-    def _update_rho(rho0, tau):
+    def _update_rho(self, rho0, tau):
         """
         式(12)に基づいてブロックの割合ρを更新する。
 
@@ -103,7 +162,7 @@ class S4BM:
         
         return rho
     
-    def update_eta(tau, data, eta0):
+    def _update_eta(self, tau, data, eta0):
         """
         式(13)に基づいてブロック内のリンク確率ηを更新する。
 
@@ -128,7 +187,7 @@ class S4BM:
         eta += eta0
         return eta
     
-    def update_mu(tau, data, mu0):
+    def _update_mu(self, tau, data, mu0):
         """
         式(14)に基づいてブロック間のリンク確率μを更新する。
 
@@ -153,6 +212,32 @@ class S4BM:
         mu += mu0
         return mu
     
-    def _update_alpha(alpha):
-        print('_update_alphaを実行')
+    def _update_alpha(self, tau, gamma, alpha, learning_rate=0.01, iterations=100):
+        """
+        カテゴリとブロック間の関係パラメータαを式(15)に基づいて更新する関数。
+
+        パラメータ:
+        - tau: 各ノードが各ブロックに属する確率、形状は(n_nodes, n_blocks)。
+        - gamma: 各ノードが各カテゴリに属する確率、形状は(n_nodes, n_categories)。
+        - alpha: カテゴリとブロック間の初期関係パラメータ、形状は(n_categories, n_blocks)。
+        - learning_rate: 勾配降下法の学習率。
+        - iterations: 勾配降下法の反復回数。
+
+        戻り値:
+        - alpha: 更新されたカテゴリとブロック間の関係パラメータ。
+        """
+        n_categories, n_blocks = alpha.shape
+        
+        for iteration in range(iterations):
+            gradient = np.zeros_like(alpha)  # 勾配を初期化
+            
+            # alphaの勾配を計算
+            for c in range(n_categories):
+                for k in range(n_blocks):
+                    for i in range(tau.shape[0]):
+                        gradient[c, k] += gamma[i, c] * (tau[i, k] - np.exp(np.dot(alpha[c, :], tau[i, :])) / np.sum(np.exp(np.dot(alpha, tau[i, :]))))
+            
+            # 勾配降下法を使用してalphaを更新
+            alpha += learning_rate * gradient
+        
         return alpha
