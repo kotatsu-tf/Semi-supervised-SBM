@@ -7,6 +7,12 @@ WORKDIR /usr/src/app
 # 必要なPythonライブラリをファイルでコピー
 COPY requirements.txt ./
 
+# pipのアップグレード
+RUN pip install --upgrade pip
+
+RUN python -m venv /venv
+ENV PATH="/venv/bin:$PATH"
+
 # requirements.txtにリストされたPythonライブラリをインストール
 RUN pip install --no-cache-dir -r requirements.txt
 
