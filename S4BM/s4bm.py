@@ -7,7 +7,7 @@ class S4BM:
         self.max_iter = max_iter
         self.random_state = random_state
 
-    def fit(self, data, categories):
+    def fit_transform(self, data, categories):
         # ノードの総数をdataの行数（または列数）から取得
         n_nodes = data.shape[0]
         n_blocks = self.n_blocks
@@ -18,8 +18,8 @@ class S4BM:
 
         # S4BLアルゴリズム実行（パラメータ更新）
         assigned_clusters = self.S4BL(data, n_blocks, category_matrix)
-    
 
+        return assigned_clusters
     
     def _create_category_matrix(self, category_list, n_nodes):
         """
@@ -76,17 +76,42 @@ class S4BM:
         return tau, gamma, alpha, rho, mu1, eta1, mu2, eta2
 
     
-    def _S4BL(self, data, K, C):
+    def _S4BL(self, data, n_blocks, C):
         """
         S4BMのパラメータ推定アルゴリズム。
         data: 隣接行列
-        K: ブロック数
+        n_blocks: ブロック数
         C: カテゴリ行列
         """
+        n_nodes = data.shape(0)
 
-        tau, gamma, alpha, rho, mu1, eta1, mu2, eta2 = self._initialize_parameters(data, data.size, K, C)
+
+        tau, gamma, alpha, rho0, mu0_1, eta0_1, mu0_2, eta0_2 = self._initialize_parameters(data, data.size, n_blocks, C)
+        rho = rho0
+        mu1 = mu0_1
+        mu2 = mu0_2
+        eta1 = eta0_1
+        eta2 = eta0_2
+
+        previous_elbo = self._calculate_elbo(data, tau, gamma, alpha, rho, mu1, eta1)
+        for iteration in range(self.max_iter):
+            tau = self._update_tau(alpha, gamma, eta1, mu1, rho, data)
+            gamma = self._update_gamma(tau, alpha)
+            rho = self._update_rho(rho0, tau)
+            alpha = self._update_alpha(tau, gamma, alpha)
+            eta1 = self._update_eta(tau, data, eta0_1)
+            mu1 = self._update_mu(tau, data, mu0_1)
+            print(f'Converged after {iteration + 1} iterations.')
         
+        Z = np.argmax(tau, axis=1)
+        return Z
 
+
+
+
+    def _calculate_elbo(self, data, tau, gamma, alpha, rho, mu1, eta1):
+        # ダミー
+        return np.random.rand()
 
     def _update_tau(self, alpha, gamma, eta, mu, rho, data):
         """
