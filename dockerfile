@@ -1,6 +1,9 @@
 # ベースイメージとしてPythonのオフィシャルイメージを使用
 FROM python:3.9
 
+# ファイルパスを環境変数に追加
+ENV PYTHONPATH="/workspaces/Semi-supervised-SBM:${PYTHONPATH}"
+
 # 作業ディレクトリを設定
 WORKDIR /usr/src/app
 
