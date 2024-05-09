@@ -1,1 +1,1 @@
-from S4BM.s4bm import S4BM
+from my_models.s4bm import S4BM
