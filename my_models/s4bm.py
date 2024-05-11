@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.special import digamma, psi
+from scipy.special import digamma
 
 class S4BM:
     def __init__(self, n_blocks=10, max_iter=2000, random_state=None):
@@ -7,17 +7,17 @@ class S4BM:
         self.max_iter = max_iter
         self.random_state = random_state
 
-    def fit_transform(self, data, categories):
+    def fit_transform(self, data, categories=None):
         # ノードの総数をdataの行数（または列数）から取得
         n_nodes = data.shape[0]
         n_blocks = self.n_blocks
         assigned_clusters = np.zeros((n_nodes, n_blocks))
-                
+
         # カテゴリ行列を作成
         category_matrix = self._create_category_matrix(categories, n_nodes)
 
         # S4BLアルゴリズム実行（パラメータ更新）
-        assigned_clusters = self.S4BL(data, n_blocks, category_matrix)
+        assigned_clusters = self._S4BL(data, n_blocks, category_matrix)
 
         return assigned_clusters
     
@@ -66,12 +66,12 @@ class S4BM:
         rho = np.ones(K)  # 各要素が1のK次元ベクトルrho0
 
         # 1パターン目
-        eta1 = np.array([0.6*rp + 0.4*rn + 0.5*ro])
-        mu1 = np.array([0.4*rp + 0.6*rn + 0.5*ro])
+        eta1 = np.array([0.6*rp, 0.4*rn, 0.5*ro])
+        mu1 = np.array([0.4*rp, 0.6*rn, 0.5*ro])
         
         # 2パターン目
-        eta2 = np.array([0.4*rp + 0.6*rn + 0.5*ro])
-        mu2 = np.array([0.6*rp + 0.4*rn + 0.5*ro])
+        eta2 = np.array([0.4*rp, 0.6*rn, 0.5*ro])
+        mu2 = np.array([0.6*rp, 0.4*rn, 0.5*ro])
 
         return tau, gamma, alpha, rho, mu1, eta1, mu2, eta2
 
@@ -83,10 +83,10 @@ class S4BM:
         n_blocks: ブロック数
         C: カテゴリ行列
         """
-        n_nodes = data.shape(0)
+        n_nodes = data.shape[0]
 
 
-        tau, gamma, alpha, rho0, mu0_1, eta0_1, mu0_2, eta0_2 = self._initialize_parameters(data, data.size, n_blocks, C)
+        tau, gamma, alpha, rho0, mu0_1, eta0_1, mu0_2, eta0_2 = self._initialize_parameters(data, n_nodes, n_blocks, C.shape[1])
         rho = rho0
         mu1 = mu0_1
         mu2 = mu0_2
@@ -95,7 +95,7 @@ class S4BM:
 
         previous_elbo = self._calculate_elbo(data, tau, gamma, alpha, rho, mu1, eta1)
         for iteration in range(self.max_iter):
-            tau = self._update_tau(alpha, gamma, eta1, mu1, rho, data)
+            tau = self._update_tau(alpha, gamma, eta1, mu1, rho, tau, data)
             gamma = self._update_gamma(tau, alpha)
             rho = self._update_rho(rho0, tau)
             alpha = self._update_alpha(tau, gamma, alpha)
@@ -113,7 +113,7 @@ class S4BM:
         # ダミー
         return np.random.rand()
 
-    def _update_tau(self, alpha, gamma, eta, mu, rho, data):
+    def _update_tau(self, alpha, gamma, eta, mu, rho, tau, data):
         """
         各ノードが各ブロックに属する確率τ（タウ）を更新する関数。
 
@@ -124,26 +124,31 @@ class S4BM:
         - eta (numpy.ndarray): リンクが存在する確率、形状は (3,) (正、負、無リンク)
         - mu (numpy.ndarray): 異なるブロック間のリンクが存在する確率、形状は (3,)
         - rho (numpy.ndarray): 各ブロックの比率、形状は (K,)
+        - tau (numpy.ndarray): 各ノードが各ブロックに属する確率を表す配列、形状は (N, K)
         - data (numpy.ndarray): 隣接行列、形状は (N, N)
 
         戻り値:
         - numpy.ndarray: 更新されたτ行列、形状は (N, K)
         """
         N, K = gamma.shape
-        tau = np.zeros((N, K))
+        # tau = np.zeros((N, K))
         beta = np.sum(np.exp(alpha), axis=0)
         
         # 全ノードに対して更新を行う
         for i in range(N):
             for k in range(K):
-                sum_gamma_alpha = np.dot(gamma[i], alpha[:, k])
-                beta_term = 1 / np.dot(beta, tau[i]) * beta[k]
-                tau_ik = psi(rho[k]) - psi(np.sum(rho)) + sum_gamma_alpha - beta_term
+                # sum_gamma_alpha = np.dot(gamma[i], alpha[:, k])
+                beta_term = np.dot((1 / np.dot(beta, tau[i].T)), beta[k])
+                sum_alpha_beta_term = 0
+                for c in range(alpha.shape[0]):
+                    sum_alpha_beta_term += np.dot(gamma[i][c], (alpha[c][k] - beta_term))
+                tau_ik = np.exp(digamma(rho[k]) - digamma(np.sum(rho)) + sum_alpha_beta_term)
                 
                 for j in range(N):
                     if i != j:
-                        tau_ik += np.sum(tau[j] * (digamma(eta) - digamma(np.sum(eta))) * data[i, j])
-                        tau_ik += np.sum(tau[j] * (digamma(mu) - digamma(np.sum(mu))) * (1 - data[i, j]))
+
+                        tau_ik *= np.sum(tau[j] * (digamma(eta) - digamma(np.sum(eta))) * data[i, j])
+                        tau_ik *= np.sum(tau[j] * (digamma(mu) - digamma(np.sum(mu))) * (1 - data[i, j]))
                 
                 tau[i, k] = np.exp(tau_ik)
         
@@ -183,7 +188,7 @@ class S4BM:
         - rho: 更新されたブロックの割合を表す配列、形状は(n_blocks,)
         """
         # 各ブロックに対するノードの割り当て確率の合計を計算し、rho0を加算
-        rho = np.sum(tau, axis=0) + rho0
+        rho = rho0 + np.sum(tau, axis=0) 
         
         return rho
     

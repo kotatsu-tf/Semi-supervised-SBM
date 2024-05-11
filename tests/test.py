@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-from my_models.s4bm import S4BM
+from my_models import S4BM
 
 class TestS4BM(unittest.TestCase):
     def setUp(self):
