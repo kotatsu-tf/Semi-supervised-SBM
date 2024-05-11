@@ -6,8 +6,8 @@ from my_models import S4BM
 file_path = 'data/input/artificial_data_1.csv'
 # CSVファイルを読み込んでNumPy配列に変換
 data = np.loadtxt(file_path, delimiter=',')
-categories = [[0],[1],[2],[3]]
+categories = [[],[],[],[]]
 
-model = S4BM(n_blocks=4, random_state=102)
+model = S4BM(max_iter=5, n_blocks=4, random_state=102)
 cluster = model.fit_transform(data, categories)
 print(cluster)

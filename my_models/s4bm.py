@@ -144,13 +144,19 @@ class S4BM:
                     sum_alpha_beta_term += np.dot(gamma[i][c], (alpha[c][k] - beta_term))
                 tau_ik = np.exp(digamma(rho[k]) - digamma(np.sum(rho)) + sum_alpha_beta_term)
                 
+                eta_term = 1
                 for j in range(N):
-                    if i != j:
+                    if i == j:
+                        continue
 
-                        tau_ik *= np.sum(tau[j] * (digamma(eta) - digamma(np.sum(eta))) * data[i, j])
-                        tau_ik *= np.sum(tau[j] * (digamma(mu) - digamma(np.sum(mu))) * (1 - data[i, j]))
+                    mu_term = 1
+                    for l in range(K):
+                        if l == k:
+                            continue
+                        mu_term *= np.exp(tau[j][l] * (digamma(mu[int(data[i][j])] - digamma(np.sum(mu)))))
+                    eta_term *= np.exp(tau[j][k] * (digamma(eta[int(data[i][j])] - digamma(np.sum(eta))))) * mu_term
                 
-                tau[i, k] = np.exp(tau_ik)
+                tau[i, k] = tau_ik * eta_term
         
         # 正規化
         tau /= np.sum(tau, axis=1, keepdims=True)
