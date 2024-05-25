@@ -3,12 +3,12 @@ import numpy as np
 from my_models import S4BM
 
 # CSVファイルのパスを指定
-file_path = 'data/input/artificial_data_for_debug.csv'
+file_path = 'data/input/artificial_data_for_debug2.csv'
 # CSVファイルを読み込んでNumPy配列に変換
 data = np.loadtxt(file_path, delimiter=',')
 categories = [[],[]]
 
-model = S4BM(max_iter=10, n_blocks=2, random_state=102)
+model = S4BM(max_iter=100, n_blocks=2, random_state=102)
 cluster = model.fit_transform(data, categories)
 print(file_path)
 print(cluster)

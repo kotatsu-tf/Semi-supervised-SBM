@@ -119,7 +119,6 @@ class S4BM:
 
         パラメータ:
         - alpha (numpy.ndarray): ラベルとブロックの関連性を示すパラメータ、形状は (M, K)
-        - beta (numpy.ndarray): β値の計算結果、形状は (K,)
         - gamma (numpy.ndarray): γ確率の行列、形状は (N, M)
         - eta (numpy.ndarray): リンクが存在する確率、形状は (3,) (正、負、無リンク)
         - mu (numpy.ndarray): 異なるブロック間のリンクが存在する確率、形状は (3,)
@@ -130,38 +129,50 @@ class S4BM:
         戻り値:
         - numpy.ndarray: 更新されたτ行列、形状は (N, K)
         """
-        N, K = gamma.shape
-        # tau = np.zeros((N, K))
+        N, K = tau.shape
+        log_tau = np.zeros((N, K))
+
+        log_rho = digamma(rho) - digamma(np.sum(rho))
         beta = np.sum(np.exp(alpha), axis=0)
         
-        # 全ノードに対して更新を行う
         for i in range(N):
             for k in range(K):
-                # sum_gamma_alpha = np.dot(gamma[i], alpha[:, k])
-                beta_term = (1.0 / np.dot(beta, tau[i].T)) * beta[k]
-                sum_alpha_beta_term = 0
-                for c in range(alpha.shape[0]):
-                    sum_alpha_beta_term += gamma[i][c] * (alpha[c][k] - beta_term)
-                tau_ik = np.exp(digamma(rho[k]) - digamma(np.sum(rho)) + sum_alpha_beta_term)
-                
-                eta_term = 1
-                for j in range(N):
-                    if i == j:
-                        continue
+                log_tau_ik = log_rho[k]
 
-                    mu_term = 1
-                    for l in range(K):
-                        if l == k:
-                            continue
-                        mu_term *= np.exp(tau[j][l] * (digamma(mu[int(data[i][j])]) - digamma(np.sum(mu))))
-                    eta_term *= np.exp(tau[j][k] * (digamma(eta[int(data[i][j])]) - digamma(np.sum(eta)))) * mu_term
-                
-                tau[i, k] = tau_ik * eta_term
+                for c in range(gamma.shape[1]):
+                    log_tau_ik += gamma[i, c] * (alpha[c, k] - (1.0 / np.dot(beta, tau[i].T)) * beta[k])
+
+                for j in range(N):
+                    if i != j:
+                        for l in range(K):
+                            if data[i, j] == 1:
+                                log_tau_ik += tau[j, k] * (digamma(eta[0]) - digamma(np.sum(eta)))
+                            elif data[i, j] == -1:
+                                log_tau_ik += tau[j, k] * (digamma(eta[1]) - digamma(np.sum(eta)))
+                            else:
+                                log_tau_ik += tau[j, k] * (digamma(eta[2]) - digamma(np.sum(eta)))
+                            if k != l:
+                                if data[i, j] == 1:
+                                    log_tau_ik += tau[j, l] * (digamma(mu[0]) - digamma(np.sum(mu)))
+                                elif data[i, j] == -1:
+                                    log_tau_ik += tau[j, l] * (digamma(mu[1]) - digamma(np.sum(mu)))
+                                else:
+                                    log_tau_ik += tau[j, l] * (digamma(mu[2]) - digamma(np.sum(mu)))
+
+                log_tau[i, k] = log_tau_ik
+
+        # 数値安定化のため、各行の最大値を引く
+        log_tau -= np.max(log_tau, axis=1, keepdims=True)
+
+        # exp を取る前に数値安定化
+        tau = np.exp(log_tau)
         
         # 正規化
         tau /= np.sum(tau, axis=1, keepdims=True)
-        
+
         return tau
+
+
     
     def _update_gamma(self, gamma, tau, alpha):
         """
@@ -195,6 +206,8 @@ class S4BM:
         gamma /= np.sum(gamma, axis=1, keepdims=True)
         
         return gamma
+
+
     
     def _update_rho(self, rho0, tau):
         """
@@ -209,6 +222,9 @@ class S4BM:
         """
         # 各ブロックに対するノードの割り当て確率の合計を計算し、rho0を加算
         rho = rho0 + np.sum(tau, axis=0) 
+
+        # 正規化
+        rho /= np.sum(rho)
         
         return rho
     
@@ -224,18 +240,32 @@ class S4BM:
         Returns:
         - eta: 更新されたブロック内のリンク確率、形状は(3,)。
         """
-        n_blocks = tau.shape[1]
+        N, K = tau.shape
         eta = np.zeros_like(eta0)
-        for h in [-1, 0, 1]:  # リンクの種類: 負のリンク, リンクなし, 正のリンク
-            link_type = h + 1  # インデックス調整
-            for k in range(n_blocks):
-                for l in range(n_blocks):
-                    if k != l:
-                        continue
-                    mask = data == h
-                    eta[link_type] += np.sum(mask * np.dot(tau[:, k:k+1], tau[:, l:l+1].T))
+        for h in range(len(eta)):
+            for i in range(N - 1):
+                for j in range(i+1, N):
+                    for k in range(K):
+                        if data[i, j] == h:
+                            eta[h] += tau[i,k]*tau[j,k]
         eta += eta0
+        # 正規化
+        eta /= np.sum(eta)
+
         return eta
+                        
+
+
+        # for h in [-1, 0, 1]:  # リンクの種類: 負のリンク, リンクなし, 正のリンク
+        #     link_type = h + 1  # インデックス調整
+        #     for k in range(n_blocks):
+        #         for l in range(n_blocks):
+        #             if k != l:
+        #                 continue
+        #             mask = data == h
+        #             eta[link_type] += np.sum(mask * np.dot(tau[:, k:k+1], tau[:, l:l+1].T))
+        # eta += eta0
+        # return eta
     
     def _update_mu(self, tau, data, mu0):
         """
@@ -249,6 +279,22 @@ class S4BM:
         Returns:
         - mu: 更新されたブロック間のリンク確率、形状は(3,)。
         """
+
+        N, K = tau.shape
+        mu = np.zeros_like(mu0)
+        for h in range(len(mu)):
+            for i in range(N - 1):
+                for j in range(i+1, N):
+                    for q in range(K):
+                        for l in range(K):
+                            if q != l:
+                                if data[i, j] == h:
+                                    mu[h] += tau[i,q]*tau[j,l]
+        mu += mu0
+        # 正規化
+        mu /= np.sum(mu)
+        return mu
+
         n_blocks = tau.shape[1]
         mu = np.zeros_like(mu0)
         for h in [-1, 0, 1]:  # リンクの種類: 負のリンク, リンクなし, 正のリンク
@@ -276,18 +322,24 @@ class S4BM:
         戻り値:
         - alpha: 更新されたカテゴリとブロック間の関係パラメータ。
         """
-        n_categories, n_blocks = alpha.shape
+        M, K = alpha.shape
+        N = tau.shape[0]
         
-        for iteration in range(iterations):
+        for _ in range(iterations):
             gradient = np.zeros_like(alpha)  # 勾配を初期化
             
             # alphaの勾配を計算
-            for c in range(n_categories):
-                for k in range(n_blocks):
-                    for i in range(tau.shape[0]):
-                        gradient[c, k] += gamma[i, c] * (tau[i, k] - np.exp(np.dot(alpha[c, :], tau[i, :])) / np.sum(np.exp(np.dot(alpha, tau[i, :]))))
+            for c in range(M):
+                for k in range(K):
+                    for i in range(N):
+                        bottom = 0
+                        for c_ in range(M):
+                            for k_ in range(K):
+                                bottom += tau[i, k_] * np.exp(alpha[c_, k_])
+                        gradient[c, k] += gamma[i, c] * (tau[i, k] - tau[i, k] * np.exp(alpha[c, k]) / bottom)
             
             # 勾配降下法を使用してalphaを更新
             alpha += learning_rate * gradient
         
+        alpha /= np.sum(alpha)
         return alpha
