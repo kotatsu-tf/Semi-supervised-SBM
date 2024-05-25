@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.special import digamma
-
+from scipy.stats import zscore
 class S4BM:
     def __init__(self, n_blocks=10, max_iter=2000, random_state=None):
         self.n_blocks = n_blocks
@@ -96,7 +96,7 @@ class S4BM:
         previous_elbo = self._calculate_elbo(data, tau, gamma, alpha, rho, mu1, eta1)
         for iteration in range(self.max_iter):
             tau = self._update_tau(alpha, gamma, eta1, mu1, rho, tau, data)
-            gamma = self._update_gamma(tau, alpha)
+            gamma = self._update_gamma(gamma, tau, alpha)
             rho = self._update_rho(rho0, tau)
             alpha = self._update_alpha(tau, gamma, alpha)
             eta1 = self._update_eta(tau, data, eta0_1)
@@ -138,10 +138,10 @@ class S4BM:
         for i in range(N):
             for k in range(K):
                 # sum_gamma_alpha = np.dot(gamma[i], alpha[:, k])
-                beta_term = np.dot((1 / np.dot(beta, tau[i].T)), beta[k])
+                beta_term = (1.0 / np.dot(beta, tau[i].T)) * beta[k]
                 sum_alpha_beta_term = 0
                 for c in range(alpha.shape[0]):
-                    sum_alpha_beta_term += np.dot(gamma[i][c], (alpha[c][k] - beta_term))
+                    sum_alpha_beta_term += gamma[i][c] * (alpha[c][k] - beta_term)
                 tau_ik = np.exp(digamma(rho[k]) - digamma(np.sum(rho)) + sum_alpha_beta_term)
                 
                 eta_term = 1
@@ -153,8 +153,8 @@ class S4BM:
                     for l in range(K):
                         if l == k:
                             continue
-                        mu_term *= np.exp(tau[j][l] * (digamma(mu[int(data[i][j])] - digamma(np.sum(mu)))))
-                    eta_term *= np.exp(tau[j][k] * (digamma(eta[int(data[i][j])] - digamma(np.sum(eta))))) * mu_term
+                        mu_term *= np.exp(tau[j][l] * (digamma(mu[int(data[i][j])]) - digamma(np.sum(mu))))
+                    eta_term *= np.exp(tau[j][k] * (digamma(eta[int(data[i][j])]) - digamma(np.sum(eta)))) * mu_term
                 
                 tau[i, k] = tau_ik * eta_term
         
@@ -163,7 +163,7 @@ class S4BM:
         
         return tau
     
-    def _update_gamma(self, tau, alpha):
+    def _update_gamma(self, gamma, tau, alpha):
         """
         各ノードとラベルに対するγ（ガンマ）確率を更新する関数。
 
@@ -175,10 +175,24 @@ class S4BM:
         - numpy.ndarray: 更新されたγ行列で、形状は (N, M)。
         """
         # 各ノードとラベルに対して指数部分を計算
-        exp_sum = np.exp(np.dot(tau, alpha.T))  # 形状 (N, M)
-        
+        N, K = tau.shape             
+        M = alpha.shape[0]
+
+        for i in range(N):
+            for c in range(M):
+                top = 0
+                for k_ in range(K):
+                    top += alpha[c, k_] * (1.0 / tau[i, k_])
+                top = np.exp(top)
+
+                bottom = 0
+                for c_ in range(M):
+                    for k_ in range(K):
+                        bottom += tau[i,k_] * np.exp(alpha[c_, k_])
+                gamma[i, c] = top / bottom
+
         # 確率として正規化
-        gamma = exp_sum / np.sum(exp_sum, axis=1, keepdims=True)
+        gamma /= np.sum(gamma, axis=1, keepdims=True)
         
         return gamma
     
