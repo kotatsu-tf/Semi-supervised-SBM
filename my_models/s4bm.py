@@ -1,13 +1,18 @@
 import numpy as np
 from scipy.special import digamma
-from scipy.stats import zscore
+import sys
+import time
+
+
 class S4BM:
     def __init__(self, n_blocks=10, max_iter=2000, random_state=None):
         self.n_blocks = n_blocks
         self.max_iter = max_iter
         self.random_state = random_state
+        self.rng = np.random.RandomState(random_state)
 
     def fit_transform(self, data, categories=None):
+        start_time = time.time()
         # ノードの総数をdataの行数（または列数）から取得
         n_nodes = data.shape[0]
         n_blocks = self.n_blocks
@@ -19,6 +24,9 @@ class S4BM:
         # S4BLアルゴリズム実行（パラメータ更新）
         assigned_clusters = self._S4BL(data, n_blocks, category_matrix)
 
+        end_time = time.time()
+        elapased_time = end_time - start_time
+        print(f"実行時間： {elapased_time:.2f} sec")
         return assigned_clusters
     
     def _create_category_matrix(self, category_list, n_nodes):
@@ -38,6 +46,9 @@ class S4BM:
             for node_id in node_ids:
                 if node_id < n_nodes:  # ノードIDがn_nodes未満の場合のみ処理
                     category_matrix[node_id, category_id] = 1
+                else:
+                    print(f"Error: Node ID {node_id} exceeds the number of nodes {n_nodes}.")
+                    sys.exit(1)  # プログラムを終了    
                     
         return category_matrix
     
@@ -59,9 +70,9 @@ class S4BM:
         """
         rp, rn, ro = self._calculate_link_ratios(data)
         
-        tau = np.random.rand(N, K)  # N×Kの一様分布からのサンプリング
-        gamma = np.random.rand(N, M)  # N×Mの一様分布からのサンプリング
-        alpha = np.random.rand(M, K)  # M×Kの一様分布からのサンプリング
+        tau = self.rng.rand(N, K)  # N×Kの一様分布からのサンプリング
+        gamma = self.rng.rand(N, M)  # N×Mの一様分布からのサンプリング
+        alpha = self.rng.rand(M, K)  # M×Kの一様分布からのサンプリング
 
         rho = np.ones(K)  # 各要素が1のK次元ベクトルrho0
 
@@ -95,8 +106,8 @@ class S4BM:
 
         previous_elbo = self._calculate_elbo(data, tau, gamma, alpha, rho, mu1, eta1)
         for iteration in range(self.max_iter):
-            tau = self._update_tau(alpha, gamma, eta1, mu1, rho, tau, data)
-            gamma = self._update_gamma(gamma, tau, alpha)
+            tau = self._update_tau(alpha, gamma, eta1, mu1, rho, tau, data, C)
+            gamma = self._update_gamma(gamma, tau, alpha, C)
             rho = self._update_rho(rho0, tau)
             alpha = self._update_alpha(tau, gamma, alpha)
             eta1 = self._update_eta(tau, data, eta0_1)
@@ -113,7 +124,7 @@ class S4BM:
         # ダミー
         return np.random.rand()
 
-    def _update_tau(self, alpha, gamma, eta, mu, rho, tau, data):
+    def _update_tau(self, alpha, gamma, eta, mu, rho, tau, data, C):
         """
         各ノードが各ブロックに属する確率τ（タウ）を更新する関数。
 
@@ -144,13 +155,14 @@ class S4BM:
 
                 for j in range(N):
                     if i != j:
+                        if data[i, j] == 1:
+                            log_tau_ik += tau[j, k] * (digamma(eta[0]) - digamma(np.sum(eta)))
+                        elif data[i, j] == -1:
+                            log_tau_ik += tau[j, k] * (digamma(eta[1]) - digamma(np.sum(eta)))
+                        else:
+                            log_tau_ik += tau[j, k] * (digamma(eta[2]) - digamma(np.sum(eta)))
+
                         for l in range(K):
-                            if data[i, j] == 1:
-                                log_tau_ik += tau[j, k] * (digamma(eta[0]) - digamma(np.sum(eta)))
-                            elif data[i, j] == -1:
-                                log_tau_ik += tau[j, k] * (digamma(eta[1]) - digamma(np.sum(eta)))
-                            else:
-                                log_tau_ik += tau[j, k] * (digamma(eta[2]) - digamma(np.sum(eta)))
                             if k != l:
                                 if data[i, j] == 1:
                                     log_tau_ik += tau[j, l] * (digamma(mu[0]) - digamma(np.sum(mu)))
@@ -167,6 +179,12 @@ class S4BM:
         # exp を取る前に数値安定化
         tau = np.exp(log_tau)
         
+        epsilon = 0.01
+        for i in range(N):
+            if np.sum(C[i]) > 0:
+                tau[i] = C[i]
+        tau = np.maximum(tau, epsilon)
+
         # 正規化
         tau /= np.sum(tau, axis=1, keepdims=True)
 
@@ -174,7 +192,7 @@ class S4BM:
 
 
     
-    def _update_gamma(self, gamma, tau, alpha):
+    def _update_gamma(self, gamma, tau, alpha, C):
         """
         各ノードとラベルに対するγ（ガンマ）確率を更新する関数。
 
@@ -188,6 +206,7 @@ class S4BM:
         # 各ノードとラベルに対して指数部分を計算
         N, K = tau.shape             
         M = alpha.shape[0]
+        
 
         for i in range(N):
             for c in range(M):
@@ -201,6 +220,10 @@ class S4BM:
                     for k_ in range(K):
                         bottom += tau[i,k_] * np.exp(alpha[c_, k_])
                 gamma[i, c] = top / bottom
+
+        for i in range(N):
+            if np.sum(C[i]) > 0:
+                gamma[i] = C[i]
 
         # 確率として正規化
         gamma /= np.sum(gamma, axis=1, keepdims=True)
@@ -242,30 +265,21 @@ class S4BM:
         """
         N, K = tau.shape
         eta = np.zeros_like(eta0)
-        for h in range(len(eta)):
-            for i in range(N - 1):
-                for j in range(i+1, N):
-                    for k in range(K):
-                        if data[i, j] == h:
-                            eta[h] += tau[i,k]*tau[j,k]
+        for i in range(N-1):
+            for j in range(i+1, N):
+                for k in range(K):
+                    if data[i, j] == 1:
+                        eta[0] += tau[i,k]*tau[j,k]
+                    elif data[i, j] == -1:
+                        eta[1] += tau[i,k]*tau[j,k]
+                    else:
+                        eta[2] += tau[i,k]*tau[j,k] 
         eta += eta0
         # 正規化
         eta /= np.sum(eta)
 
         return eta
                         
-
-
-        # for h in [-1, 0, 1]:  # リンクの種類: 負のリンク, リンクなし, 正のリンク
-        #     link_type = h + 1  # インデックス調整
-        #     for k in range(n_blocks):
-        #         for l in range(n_blocks):
-        #             if k != l:
-        #                 continue
-        #             mask = data == h
-        #             eta[link_type] += np.sum(mask * np.dot(tau[:, k:k+1], tau[:, l:l+1].T))
-        # eta += eta0
-        # return eta
     
     def _update_mu(self, tau, data, mu0):
         """
@@ -282,30 +296,20 @@ class S4BM:
 
         N, K = tau.shape
         mu = np.zeros_like(mu0)
-        for h in range(len(mu)):
-            for i in range(N - 1):
-                for j in range(i+1, N):
-                    for q in range(K):
-                        for l in range(K):
-                            if q != l:
-                                if data[i, j] == h:
-                                    mu[h] += tau[i,q]*tau[j,l]
+        for i in range(N - 1):
+            for j in range(i+1, N):
+                for q in range(K):
+                    for l in range(K):
+                        if q != l:
+                            if data[i, j] == 1:
+                                mu[0] += tau[i,q]*tau[j,l]
+                            elif data[i, j] == -1:
+                                mu[1] += tau[i,q]*tau[j,l]
+                            else:
+                                mu[2] += tau[i,q]*tau[j,l]
         mu += mu0
         # 正規化
         mu /= np.sum(mu)
-        return mu
-
-        n_blocks = tau.shape[1]
-        mu = np.zeros_like(mu0)
-        for h in [-1, 0, 1]:  # リンクの種類: 負のリンク, リンクなし, 正のリンク
-            link_type = h + 1  # インデックス調整
-            for k in range(n_blocks):
-                for l in range(n_blocks):
-                    if k == l:
-                        continue
-                    mask = data == h
-                    mu[link_type] += np.sum(mask * np.dot(tau[:, k:k+1], tau[:, l:l+1].T))
-        mu += mu0
         return mu
     
     def _update_alpha(self, tau, gamma, alpha, learning_rate=0.01, iterations=100):
@@ -336,7 +340,7 @@ class S4BM:
                         for c_ in range(M):
                             for k_ in range(K):
                                 bottom += tau[i, k_] * np.exp(alpha[c_, k_])
-                        gradient[c, k] += gamma[i, c] * (tau[i, k] - tau[i, k] * np.exp(alpha[c, k]) / bottom)
+                        gradient[c, k] += gamma[i, c] * ((tau[i, k] - (tau[i, k] * np.exp(alpha[c, k]))) / bottom)
             
             # 勾配降下法を使用してalphaを更新
             alpha += learning_rate * gradient
