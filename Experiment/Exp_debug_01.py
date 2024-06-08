@@ -8,10 +8,11 @@ file_path = 'data/input/artificial_data_debug2a.csv'
 data = np.loadtxt(file_path, delimiter=',')
 categories = [[],[]]
 
-model = S4BM(max_iter=30, n_blocks=2, random_state=107, is_show_params_history=True)
+SEED =100
+model = S4BM(max_iter=30, n_blocks=2, random_state=SEED, is_show_params_history=True)
 cluster = model.fit_transform(data, categories)
 print("------------------------Result------------------------")
-print("model=" + str(model))
+print("seed=" + str(SEED))
 print("categories=" + str(categories))
 print("file_path=" + str(file_path))
 print(cluster)
