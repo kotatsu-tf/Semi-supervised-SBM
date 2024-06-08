@@ -1,14 +1,21 @@
 import numpy as np
+import matplotlib.pyplot as plt
 from scipy.special import digamma
 import sys
 import time
+import os
+from datetime import datetime
+import pytz
+import csv
+import copy
 
 
 class S4BM:
-    def __init__(self, n_blocks=10, max_iter=2000, random_state=None):
+    def __init__(self, n_blocks=10, max_iter=2000, random_state=None, is_show_params_history=False):
         self.n_blocks = n_blocks
         self.max_iter = max_iter
         self.random_state = random_state
+        self.is_show_params_history = is_show_params_history
         self.rng = np.random.RandomState(random_state)
 
     def fit_transform(self, data, categories=None):
@@ -98,27 +105,114 @@ class S4BM:
 
 
         tau, gamma, alpha, rho0, mu0_1, eta0_1, mu0_2, eta0_2 = self._initialize_parameters(data, n_nodes, n_blocks, C.shape[1])
+        
         rho = rho0
         mu1 = mu0_1
         mu2 = mu0_2
         eta1 = eta0_1
         eta2 = eta0_2
+        tau_his, gamma_his, alpha_his, rho_his, mu_his, eta_his = [], [], [], [], [], []
 
         previous_elbo = self._calculate_elbo(data, tau, gamma, alpha, rho, mu1, eta1)
         for iteration in range(self.max_iter):
+
+            tau_his.append(copy.deepcopy(tau))
+            gamma_his.append(copy.deepcopy(gamma))
+            rho_his.append(copy.deepcopy(rho))
+            alpha_his.append(copy.deepcopy(alpha))
+            eta_his.append(copy.deepcopy(eta1))
+            mu_his.append(copy.deepcopy(mu1))
+            
             tau = self._update_tau(alpha, gamma, eta1, mu1, rho, tau, data, C)
             gamma = self._update_gamma(gamma, tau, alpha, C)
-            rho = self._update_rho(rho0, tau)
-            alpha = self._update_alpha(tau, gamma, alpha)
-            eta1 = self._update_eta(tau, data, eta0_1)
+            rho = self._update_rho(rho0, tau)            
+            alpha = self._update_alpha(tau, gamma, alpha)            
+            eta1 = self._update_eta(tau, data, eta0_1)            
             mu1 = self._update_mu(tau, data, mu0_1)
+
+
             print(f'Converged after {iteration + 1} iterations.')
         
+        if self.is_show_params_history:
+            self._make_graph(tau_his, gamma_his, rho_his, alpha_his, eta_his, mu_his)
         Z = np.argmax(tau, axis=1)
         return Z
 
+    
+    def _make_graph(self, tau_his, gamma_his, rho_his, alpha_his, eta_his, mu_his):
+        data_list = {'tau_his':tau_his, 'gamma_his':gamma_his, 'rho_his':rho_his, 'alpha_his':alpha_his, 'eta_his':eta_his, 'mu_his':mu_his}
+
+        # 現在の時刻を取得してフォルダ名を作成
+        jst = pytz.timezone('Asia/Tokyo')
+        current_time = datetime.now(jst).strftime('%Y%m%d_%H%M%S')
+        save_directory = os.path.join('/workspaces/Semi-supervised-SBM/data/output/images', current_time)
+        os.makedirs(save_directory, exist_ok=True)  # ディレクトリが存在しない場合は作成
+
+        for list_name, data in data_list.items():
+            data = np.array(data)
+            dim = data.ndim
+            num_repeats = len(data)
+            if dim == 3:
+                num_rows, num_cols = data[0].shape
+            elif dim == 2:
+                num_rows = 1
+                num_cols = len(data[0])
+            else:
+                print('正しく次元数が出力されていません')
+
+            fig_width = max(num_cols * 5, num_repeats / 2)
+            fig_height = num_rows * 5
+
+            fig, axes = plt.subplots(num_rows, num_cols, figsize=(fig_width, fig_height))
+
+            # CSVファイルの準備
+            csv_file_path = os.path.join(save_directory, f'{list_name}_values.csv')
+            with open(csv_file_path, mode='w', newline='') as csv_file:
+                csv_writer = csv.writer(csv_file)
+                # ヘッダーを作成
+                headers = ['Iteration'] + [f'{i}-{j}' for i in range(num_rows) for j in range(num_cols)]
+                csv_writer.writerow(headers)
+
+                # 各イテレーションの値を書き込み
+                for t in range(num_repeats):
+                    if dim == 3:
+                        row = [t] + [data[t][i][j] for i in range(num_rows) for j in range(num_cols)]
+                    elif dim == 2:
+                        row = [t] + [data[t][j] for j in range(num_cols)]
+                    csv_writer.writerow(row)
+
+            # 各要素の値の変化をプロット
+            for i in range(num_rows):
+                for j in range(num_cols):
+                    if dim == 3:
+                        values = [data[t][i][j] for t in range(num_repeats)]
+                        axes[i, j].plot(range(num_repeats), values, marker='o')
+                        axes[i, j].set_title(f'{list_name}, node{i}, cluster{j}')
+                        axes[i, j].set_xlabel('Iteration')
+                        axes[i, j].set_ylabel('probability')
+                        axes[i, j].grid(True)
+                        axes[i, j].set_ylim(0, 1) # 縦軸の範囲を0から1に設定
+                        axes[i, j].set_xticks(range(num_repeats)) # x軸のメモリを1ごとに設定
+                    elif dim == 2:
+                        values = [data[t][j] for t in range(num_repeats)]
+                        axes[j].plot(range(num_repeats), values, marker='o')
+                        axes[j].set_title(f'{list_name}, node{i}, cluster{j}')
+                        axes[j].set_xlabel('Iteration')
+                        axes[j].set_ylabel('probability')
+                        axes[j].grid(True)
+                        axes[j].set_ylim(0, 1) # 縦軸の範囲を0から1に設定
+                        axes[j].set_xticks(range(num_repeats)) # x軸のメモリを1ごとに設定
 
 
+            # サブプロット間のレイアウトを調整
+            plt.tight_layout()
+
+            # グラフを保存
+            file_path = os.path.join(save_directory, f'{list_name}_3d_array_plot.png')
+            plt.savefig(file_path)
+            plt.close()
+
+            print(f"グラフが {file_path} に保存されました。")
 
     def _calculate_elbo(self, data, tau, gamma, alpha, rho, mu1, eta1):
         # ダミー
