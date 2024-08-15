@@ -364,24 +364,25 @@ class PrMethod:
 
 
     
-    def _update_rho(self, rho0, tau):
+    def _update_rho(self, rho_init, tau):
         """
-        式(12)に基づいてブロックの割合ρを更新する。
+        提案手法に基づいてブロックの割合ρを更新する関数。
 
         Parameters:
-        - tau: 各ノードが各ブロックに属する確率を表す配列、形状は(n_nodes, num_cluster_k)
-        - rho0: ρの初期値を表す配列、形状は(num_cluster_k,)
+        - tau: 各ノードが各ブロックに属する確率を表す配列、形状は(n_objects, num_clusters)
+        - rho_init: ρの初期値を表す配列、形状は(num_clusters,)
 
         Returns:
-        - rho: 更新されたブロックの割合を表す配列、形状は(num_cluster_k,)
+        - rho: 更新されたブロックの割合を表す配列、形状は(num_clusters,)
         """
-        # 各ブロックに対するノードの割り当て確率の合計を計算し、rho0を加算
-        rho = rho0 + np.sum(tau, axis=0) 
+        # 各ブロックに対するノードの割り当て確率の合計を計算し、rho_initを加算
+        rho = rho_init + np.sum(tau, axis=0)
 
         # 正規化
         rho /= np.sum(rho)
         
         return rho
+
     
     def _update_eta(self, tau, data, eta0):
         """
@@ -411,39 +412,7 @@ class PrMethod:
         eta /= np.sum(eta)
 
         return eta
-                        
-    
-    def _update_mu(self, tau, data, mu0):
-        """
-        式(14)に基づいてブロック間のリンク確率μを更新する。
-
-        Parameters:
-        - tau: 各ノードが各ブロックに属する確率を表す配列、形状は(n_nodes, num_cluster_k)
-        - data: ネットワークの隣接行列、形状は(n_nodes, n_nodes)。要素は1, -1, 0。
-        - mu0: μの初期値、形状は(3,)。正のリンク、負のリンク、リンクなしの確率。
-
-        Returns:
-        - mu: 更新されたブロック間のリンク確率、形状は(3,)。
-        """
-
-        N, K = tau.shape
-        mu = np.zeros_like(mu0)
-        for i in range(N - 1):
-            for j in range(i+1, N):
-                for q in range(K):
-                    for l in range(K):
-                        if q != l:
-                            if data[i, j] == 1:
-                                mu[0] += tau[i,q]*tau[j,l]
-                            elif data[i, j] == -1:
-                                mu[1] += tau[i,q]*tau[j,l]
-                            else:
-                                mu[2] += tau[i,q]*tau[j,l]
-        mu += mu0
-        # 正規化
-        mu /= np.sum(mu)
-        return mu
-    
+                            
     def _update_alpha(self, tau, gamma, alpha, learning_rate=0.01, iterations=100):
         """
         カテゴリとブロック間の関係パラメータαを式(15)に基づいて更新する関数。
