@@ -362,7 +362,6 @@ class PrMethod:
         return gamma
 
 
-    
     def _update_rho(self, rho_init, tau):
         """
         提案手法に基づいてブロックの割合ρを更新する関数。
@@ -383,67 +382,86 @@ class PrMethod:
         return rho
 
     
-    def _update_eta(self, tau, data, eta0):
+    def _update_eta(self, tau_1, tau_2, data, eta_init):
         """
-        式(13)に基づいてブロック内のリンク確率ηを更新する。
+        提案手法に基づいてブロック内のリンク確率ηを更新する関数。
 
         Parameters:
-        - tau: 各ノードが各ブロックに属する確率を表す配列、形状は(n_nodes, num_cluster_k)
-        - data: ネットワークの隣接行列、形状は(n_nodes, n_nodes)。要素は1, -1, 0。
-        - eta0: ηの初期値、形状は(3,)。正のリンク、負のリンク、リンクなしの確率。
+        - tau_1: 行側ノードが各ブロックに属する確率を表す配列、形状は(n_objects_1, num_cluster_1)
+        - tau_2: 列側ノードが各ブロックに属する確率を表す配列、形状は(n_objects_2, num_cluster_2)
+        - data: ネットワークの隣接行列、形状は(n_objects_1, n_objects_2)。要素は1, -1, 0。
+        - eta_init: ηの初期値、形状は(num_cluster_1, num_cluster_2, 3)。
 
         Returns:
-        - eta: 更新されたブロック内のリンク確率、形状は(3,)。
+        - eta: 更新されたブロック内のリンク確率、形状は(num_cluster_1, num_cluster_2, 3)。
         """
-        N, K = tau.shape
-        eta = np.zeros_like(eta0)
-        for i in range(N-1):
-            for j in range(i+1, N):
-                for k in range(K):
-                    if data[i, j] == 1:
-                        eta[0] += tau[i,k]*tau[j,k]
-                    elif data[i, j] == -1:
-                        eta[1] += tau[i,k]*tau[j,k]
-                    else:
-                        eta[2] += tau[i,k]*tau[j,k] 
-        eta += eta0
+        num_cluster_1, num_cluster_2, _ = eta_init.shape
+        eta = np.zeros_like(eta_init)
+
+        for k in range(num_cluster_1):
+            for l in range(num_cluster_2):
+                for i in range(tau_1.shape[0]):  # n_objects_1
+                    for j in range(tau_2.shape[0]):  # n_objects_2
+                        if data[i, j] == 1:
+                            eta[k, l, 0] += tau_1[i, k] * tau_2[j, l]  # 正のリンク
+                        elif data[i, j] == -1:
+                            eta[k, l, 1] += tau_1[i, k] * tau_2[j, l]  # 負のリンク
+                        elif data[i, j] == 0:
+                            eta[k, l, 2] += tau_1[i, k] * tau_2[j, l]  # リンクなし
+
+        # 初期値 eta_init を加算
+        eta += eta_init
+
         # 正規化
-        eta /= np.sum(eta)
+        eta /= np.sum(eta, axis=2, keepdims=True)
 
         return eta
+
                             
-    def _update_alpha(self, tau, gamma, alpha, learning_rate=0.01, iterations=100):
+    def _update_alpha(self, tau, gamma, alpha, learning_rate=0.01, iterations=100, tol=1e-6):
         """
-        カテゴリとブロック間の関係パラメータαを式(15)に基づいて更新する関数。
+        提案手法に基づいてカテゴリとブロック間の関係パラメータαを更新する関数。
 
-        パラメータ:
-        - tau: 各ノードが各ブロックに属する確率、形状は(n_nodes, num_cluster_k)。
-        - gamma: 各ノードが各カテゴリに属する確率、形状は(n_nodes, n_categories)。
-        - alpha: カテゴリとブロック間の初期関係パラメータ、形状は(n_categories, num_cluster_k)。
+        Parameters:
+        - tau: 各ノードが各ブロックに属する確率、形状は(n_objects, num_clusters)。
+        - gamma: 各ノードが各カテゴリに属する確率、形状は(n_objects, num_categories)。
+        - alpha: カテゴリとブロック間の初期関係パラメータ、形状は(num_categories, num_clusters)。
         - learning_rate: 勾配降下法の学習率。
-        - iterations: 勾配降下法の反復回数。
+        - iterations: 勾配降下法の最大反復回数。
+        - tol: 収束判定のための許容誤差。デフォルトは1e-6。
 
-        戻り値:
+        Returns:
         - alpha: 更新されたカテゴリとブロック間の関係パラメータ。
         """
         M, K = alpha.shape
         N = tau.shape[0]
         
-        for _ in range(iterations):
+        for iteration in range(iterations):
             gradient = np.zeros_like(alpha)  # 勾配を初期化
+            alpha_old = alpha.copy()  # 以前のalphaを保存
             
-            # alphaの勾配を計算
             for c in range(M):
                 for k in range(K):
+                    numerator = 0
+                    denominator = 0
+                    
                     for i in range(N):
-                        bottom = 0
-                        for c_ in range(M):
-                            for k_ in range(K):
-                                bottom += tau[i, k_] * np.exp(alpha[c_, k_])
-                        gradient[c, k] += gamma[i, c] * ((tau[i, k] - (tau[i, k] * np.exp(alpha[c, k]))) / bottom)
+                        numerator += gamma[i, c] * (tau[i, k] - tau[i, k] * np.exp(alpha[c, k]))
+                        
+                        # denominator を計算
+                        denominator += np.sum([tau[i, k_] * np.exp(alpha[c_prime, k_]) for c_prime in range(M) for k_ in range(K)])
+                    
+                    gradient[c, k] = numerator / denominator
             
             # 勾配降下法を使用してalphaを更新
             alpha += learning_rate * gradient
+
+            # 収束判定：alphaの変化が許容誤差未満なら終了
+            if np.linalg.norm(alpha - alpha_old) < tol:
+                print(f"Alpha has converged after {iteration + 1} iterations.")
+                break
         
-        alpha /= np.sum(alpha)
+        # αを正規化
+        alpha /= np.sum(alpha, axis=1, keepdims=True)
+
         return alpha
