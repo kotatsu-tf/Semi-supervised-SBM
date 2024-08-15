@@ -11,30 +11,33 @@ import copy
 
 
 class PrMethod:
-    def __init__(self, n_blocks=10, max_iter=2000, random_state=None, is_show_params_history=False):
-        self.n_blocks = n_blocks
+    def __init__(self, num_cluster_k=2, num_cluster_l=3, max_iter=2000, random_state=None, is_show_params_history=False):
+        self.num_cluster_k = num_cluster_k
+        self.num_cluster_l = num_cluster_l
         self.max_iter = max_iter
         self.random_state = random_state
         self.is_show_params_history = is_show_params_history
         self.rng = np.random.RandomState(random_state)
 
-    def fit_transform(self, data, categories=None):
+
+    def fit_transform(self, data, row_categories=None, col_categories=None):
         start_time = time.time()
-        # ノードの総数をdataの行数（または列数）から取得
-        n_nodes = data.shape[0]
-        n_blocks = self.n_blocks
-        assigned_clusters = np.zeros((n_nodes, n_blocks))
+        # オブジェクト数を行数と列数として取得
+        n_objects = (data.shape[0], data.shape[1])
+        num_cluster_k = self.num_cluster_k
+        num_cluster_l = self.num_cluster_l
 
-        # カテゴリ行列を作成
-        category_matrix = self._create_category_matrix(categories, n_nodes)
+        # カテゴリ行列を作成（行と列それぞれ）
+        row_category_matrix = self._create_category_matrix(row_categories, n_objects[0])
+        col_category_matrix = self._create_category_matrix(col_categories, n_objects[1])
 
-        # S4BLアルゴリズム実行（パラメータ更新）
-        assigned_clusters = self._S4BL(data, n_blocks, category_matrix)
+        # 提案手法のアルゴリズムを実行し、パラメータを更新
+        assigned_clusters_k, assigned_clusters_l = self._proposed_method(data, num_cluster_k, num_cluster_l, row_category_matrix, col_category_matrix)
 
         end_time = time.time()
         elapased_time = end_time - start_time
         print(f"実行時間： {elapased_time:.2f} sec")
-        return assigned_clusters
+        return assigned_clusters_k, assigned_clusters_l
     
     def _create_category_matrix(self, category_list, n_nodes):
         """
@@ -67,76 +70,111 @@ class PrMethod:
         ro = np.sum(data == 0) / total_links  # リンクなしの割合
         return rp, rn, ro
     
-    def _initialize_parameters(self,data, N, K, M):
+    def _initialize_parameters(self, data, n_objects, num_cluster_1, num_cluster_2):
         """
-        パラメータtau, gamma, mu, eta, rho, alphaの初期化
+        パラメータtau, gamma, eta, rho, alphaの初期化
         data: 隣接行列
-        N: ノード数
-        K: ブロック数
-        M: カテゴリ数
+        n_objects: オブジェクト数 (n_rows, n_cols)
+        num_cluster_1: ブロック数（行側）
+        num_cluster_2: ブロック数（列側）
         """
         rp, rn, ro = self._calculate_link_ratios(data)
         
-        tau = self.rng.rand(N, K)  # N×Kの一様分布からのサンプリング
-        gamma = self.rng.rand(N, M)  # N×Mの一様分布からのサンプリング
-        alpha = self.rng.rand(M, K)  # M×Kの一様分布からのサンプリング
-
-        rho = np.ones(K)  # 各要素が1のK次元ベクトルrho0
-
-        # 1パターン目
-        eta1 = np.array([0.6*rp, 0.4*rn, 0.5*ro])
-        mu1 = np.array([0.4*rp, 0.6*rn, 0.5*ro])
+        # τ, γ, αの初期化
+        tau_1 = self.rng.rand(n_objects[0], num_cluster_1)  # 行側クラスタのτ（タウ）
+        tau_2 = self.rng.rand(n_objects[1], num_cluster_2)  # 列側クラスタのτ（タウ）
         
-        # 2パターン目
-        eta2 = np.array([0.4*rp, 0.6*rn, 0.5*ro])
-        mu2 = np.array([0.6*rp, 0.4*rn, 0.5*ro])
+        gamma_1 = self.rng.rand(n_objects[0], num_cluster_1)  # 行側のγ（ガンマ）
+        gamma_2 = self.rng.rand(n_objects[1], num_cluster_2)  # 列側のγ（ガンマ）
+        
+        alpha_1 = self.rng.rand(num_cluster_1, num_cluster_1)  # 行側のα（アルファ）
+        alpha_2 = self.rng.rand(num_cluster_2, num_cluster_2)  # 列側のα（アルファ）
+        
+        # rhoの初期化
+        rho_1 = np.ones(num_cluster_1)  # 行側のブロック数に対するρ（ロー）
+        rho_2 = np.ones(num_cluster_2)  # 列側のブロック数に対するρ（ロー）
 
-        return tau, gamma, alpha, rho, mu1, eta1, mu2, eta2
+        # etaの初期化
+        eta = np.zeros((num_cluster_1, num_cluster_2, 3))  # 3次元配列で初期化 (num_cluster_1, num_cluster_2, 3)
+        for k in range(num_cluster_1):
+            for l in range(num_cluster_2):
+                eta[k][l] = np.array([rp, rn, ro])  # 各eta_klをnp.array([rp, rn, ro])で初期化
+
+        return tau_1, tau_2, gamma_1, gamma_2, alpha_1, alpha_2, rho_1, rho_2, eta
+
 
     
-    def _S4BL(self, data, n_blocks, C):
+    def _proposed_method(self, data, num_cluster_1, num_cluster_2, row_category_matrix, col_category_matrix):
         """
-        S4BMのパラメータ推定アルゴリズム。
+        提案手法に基づくパラメータ推定アルゴリズム。
         data: 隣接行列
-        n_blocks: ブロック数
-        C: カテゴリ行列
+        num_cluster_1: 行側ブロック数
+        num_cluster_2: 列側ブロック数
+        row_category_matrix: 行側カテゴリ行列
+        col_category_matrix: 列側カテゴリ行列
         """
-        n_nodes = data.shape[0]
+        n_objects = (data.shape[0], data.shape[1])
 
+        # パラメータの初期化
+        tau_1, tau_2, gamma_1, gamma_2, alpha_1, alpha_2, rho_1_init, rho_2_init, eta_init = self._initialize_parameters(data, n_objects, num_cluster_1, num_cluster_2)
 
-        tau, gamma, alpha, rho0, mu0_1, eta0_1, mu0_2, eta0_2 = self._initialize_parameters(data, n_nodes, n_blocks, C.shape[1])
-        
-        rho = rho0
-        mu1 = mu0_1
-        mu2 = mu0_2
-        eta1 = eta0_1
-        eta2 = eta0_2
-        tau_his, gamma_his, alpha_his, rho_his, mu_his, eta_his = [], [], [], [], [], []
+        # パラメータ履歴の保存用リスト
+        tau_1_history = []
+        tau_2_history = []
+        gamma_1_history = []
+        gamma_2_history = []
+        alpha_1_history = []
+        alpha_2_history = []
+        rho_1_history = []
+        rho_2_history = []
+        eta_history = []
 
-        previous_elbo = self._calculate_elbo(data, tau, gamma, alpha, rho, mu1, eta1)
+        previous_elbo = self._calculate_elbo(data, tau_1, tau_2, gamma_1, gamma_2, alpha_1, alpha_2, rho_1_init, rho_2_init, eta_init)
+
         for iteration in range(self.max_iter):
+            # 前回のパラメータを保存
+            tau_1_prev = tau_1.copy()
+            tau_2_prev = tau_2.copy()
 
-            tau_his.append(copy.deepcopy(tau))
-            gamma_his.append(copy.deepcopy(gamma))
-            rho_his.append(copy.deepcopy(rho))
-            alpha_his.append(copy.deepcopy(alpha))
-            eta_his.append(copy.deepcopy(eta1))
-            mu_his.append(copy.deepcopy(mu1))
-            
-            tau = self._update_tau(alpha, gamma, eta1, mu1, rho, tau, data, C)
-            gamma = self._update_gamma(gamma, tau, alpha, C)
-            rho = self._update_rho(rho0, tau)            
-            alpha = self._update_alpha(tau, gamma, alpha)            
-            eta1 = self._update_eta(tau, data, eta0_1)            
-            mu1 = self._update_mu(tau, data, mu0_1)
+            # パラメータの更新（初期化時のrho_1_init, rho_2_init, eta_initを使用）
+            tau_1 = self._update_tau_1(alpha_1, gamma_1, eta_init, rho_1_init, tau_1_prev, data, row_category_matrix)
+            tau_2 = self._update_tau_2(alpha_2, gamma_2, eta_init, rho_2_init, tau_2_prev, data, col_category_matrix)
+            gamma_1 = self._update_gamma_1(gamma_1, tau_1_prev, alpha_1, row_category_matrix)
+            gamma_2 = self._update_gamma_2(gamma_2, tau_2_prev, alpha_2, col_category_matrix)
+            rho_1 = self._update_rho(rho_1_init, tau_1_prev)
+            rho_2 = self._update_rho(rho_2_init, tau_2_prev)
+            alpha_1 = self._update_alpha(tau_1_prev, gamma_1, alpha_1)
+            alpha_2 = self._update_alpha(tau_2_prev, gamma_2, alpha_2)
+            eta = self._update_eta(tau_1_prev, tau_2_prev, data, eta_init)
 
+            # 各パラメータの値を履歴として保存
+            tau_1_history.append(tau_1.copy())
+            tau_2_history.append(tau_2.copy())
+            gamma_1_history.append(gamma_1.copy())
+            gamma_2_history.append(gamma_2.copy())
+            alpha_1_history.append(alpha_1.copy())
+            alpha_2_history.append(alpha_2.copy())
+            rho_1_history.append(rho_1.copy())
+            rho_2_history.append(rho_2.copy())
+            eta_history.append(eta.copy())
 
-            print(f'Converged after {iteration + 1} iterations.')
-        
+            # 収束条件のチェックを一時的にコメントアウト
+            # current_elbo = self._calculate_elbo(data, tau_1, tau_2, gamma_1, gamma_2, alpha_1, alpha_2, rho_1, rho_2, eta)
+            # if np.abs(current_elbo - previous_elbo) < 1e-6:
+            #     print(f'Converged after {iteration + 1} iterations.')
+            #     break
+            # previous_elbo = current_elbo
+
+            print(f'Iteration {iteration + 1} completed.')
+
+        Z_1 = np.argmax(tau_1, axis=1)
+        Z_2 = np.argmax(tau_2, axis=1)
+
         if self.is_show_params_history:
-            self._make_graph(tau_his, gamma_his, rho_his, alpha_his, eta_his, mu_his)
-        Z = np.argmax(tau, axis=1)
-        return Z
+            # パラメータ履歴をグラフ化または保存する
+            self._make_graph(tau_1_history, tau_2_history, gamma_1_history, gamma_2_history, rho_1_history, rho_2_history, alpha_1_history, alpha_2_history, eta_history)
+
+        return Z_1, Z_2
 
     
     def _make_graph(self, tau_his, gamma_his, rho_his, alpha_his, eta_his, mu_his):
@@ -331,11 +369,11 @@ class PrMethod:
         式(12)に基づいてブロックの割合ρを更新する。
 
         Parameters:
-        - tau: 各ノードが各ブロックに属する確率を表す配列、形状は(n_nodes, n_blocks)
-        - rho0: ρの初期値を表す配列、形状は(n_blocks,)
+        - tau: 各ノードが各ブロックに属する確率を表す配列、形状は(n_nodes, num_cluster_k)
+        - rho0: ρの初期値を表す配列、形状は(num_cluster_k,)
 
         Returns:
-        - rho: 更新されたブロックの割合を表す配列、形状は(n_blocks,)
+        - rho: 更新されたブロックの割合を表す配列、形状は(num_cluster_k,)
         """
         # 各ブロックに対するノードの割り当て確率の合計を計算し、rho0を加算
         rho = rho0 + np.sum(tau, axis=0) 
@@ -350,7 +388,7 @@ class PrMethod:
         式(13)に基づいてブロック内のリンク確率ηを更新する。
 
         Parameters:
-        - tau: 各ノードが各ブロックに属する確率を表す配列、形状は(n_nodes, n_blocks)
+        - tau: 各ノードが各ブロックに属する確率を表す配列、形状は(n_nodes, num_cluster_k)
         - data: ネットワークの隣接行列、形状は(n_nodes, n_nodes)。要素は1, -1, 0。
         - eta0: ηの初期値、形状は(3,)。正のリンク、負のリンク、リンクなしの確率。
 
@@ -380,7 +418,7 @@ class PrMethod:
         式(14)に基づいてブロック間のリンク確率μを更新する。
 
         Parameters:
-        - tau: 各ノードが各ブロックに属する確率を表す配列、形状は(n_nodes, n_blocks)
+        - tau: 各ノードが各ブロックに属する確率を表す配列、形状は(n_nodes, num_cluster_k)
         - data: ネットワークの隣接行列、形状は(n_nodes, n_nodes)。要素は1, -1, 0。
         - mu0: μの初期値、形状は(3,)。正のリンク、負のリンク、リンクなしの確率。
 
@@ -411,9 +449,9 @@ class PrMethod:
         カテゴリとブロック間の関係パラメータαを式(15)に基づいて更新する関数。
 
         パラメータ:
-        - tau: 各ノードが各ブロックに属する確率、形状は(n_nodes, n_blocks)。
+        - tau: 各ノードが各ブロックに属する確率、形状は(n_nodes, num_cluster_k)。
         - gamma: 各ノードが各カテゴリに属する確率、形状は(n_nodes, n_categories)。
-        - alpha: カテゴリとブロック間の初期関係パラメータ、形状は(n_categories, n_blocks)。
+        - alpha: カテゴリとブロック間の初期関係パラメータ、形状は(n_categories, num_cluster_k)。
         - learning_rate: 勾配降下法の学習率。
         - iterations: 勾配降下法の反復回数。
 
