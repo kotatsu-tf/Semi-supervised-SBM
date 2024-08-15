@@ -326,40 +326,39 @@ class PrMethod:
     
     def _update_gamma(self, gamma, tau, alpha, C):
         """
-        各ノードとラベルに対するγ（ガンマ）確率を更新する関数。
+        提案手法に基づいてγ（ガンマ）確率を更新する関数。
 
-        パラメータ:
+        Parameters:
+        - gamma (numpy.ndarray): γの初期値、形状は (N, M)。
+        - tau (numpy.ndarray): τ確率の行列、形状は (N, K)。ノードが各ブロックに属する確率を示す。
         - alpha (numpy.ndarray): αパラメータの行列で、形状は (M, K)。ラベルとブロックの関連性を示す。
-        - tau (numpy.ndarray): τ確率の行列で、形状は (N, K)。ノードが各ブロックに属する確率を示す。
+        - C (numpy.ndarray): カテゴリ行列、形状は (N, M)。
 
-        戻り値:
+        Returns:
         - numpy.ndarray: 更新されたγ行列で、形状は (N, M)。
         """
-        # 各ノードとラベルに対して指数部分を計算
-        N, K = tau.shape             
+        N, K = tau.shape
         M = alpha.shape[0]
-        
 
         for i in range(N):
             for c in range(M):
-                top = 0
-                for k_ in range(K):
-                    top += alpha[c, k_] * (1.0 / tau[i, k_])
-                top = np.exp(top)
+                numerator = np.exp(np.sum(alpha[c, :] * tau[i, :]) - 1)
+                
+                denominator = np.sum([
+                    np.sum(tau[i, :] * np.exp(alpha[c_prime, :]))
+                    for c_prime in range(M)
+                ])
+                
+                gamma[i, c] = numerator / denominator
 
-                bottom = 0
-                for c_ in range(M):
-                    for k_ in range(K):
-                        bottom += tau[i,k_] * np.exp(alpha[c_, k_])
-                gamma[i, c] = top / bottom
-
+        # カテゴリ行列Cが与えられている場合、対応するgammaの行を置き換える
         for i in range(N):
             if np.sum(C[i]) > 0:
                 gamma[i] = C[i]
 
         # 確率として正規化
         gamma /= np.sum(gamma, axis=1, keepdims=True)
-        
+
         return gamma
 
 
