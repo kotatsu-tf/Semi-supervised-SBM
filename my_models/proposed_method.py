@@ -137,15 +137,15 @@ class PrMethod:
             tau_2_prev = tau_2.copy()
 
             # パラメータの更新（初期化時のrho_1_init, rho_2_init, eta_initを使用）
-            tau_1 = self._update_tau_1(alpha_1, gamma_1, eta_init, rho_1_init, tau_1_prev, data, row_category_matrix)
-            tau_2 = self._update_tau_2(alpha_2, gamma_2, eta_init, rho_2_init, tau_2_prev, data, col_category_matrix)
-            gamma_1 = self._update_gamma_1(gamma_1, tau_1_prev, alpha_1, row_category_matrix)
-            gamma_2 = self._update_gamma_2(gamma_2, tau_2_prev, alpha_2, col_category_matrix)
-            rho_1 = self._update_rho(rho_1_init, tau_1_prev)
-            rho_2 = self._update_rho(rho_2_init, tau_2_prev)
-            alpha_1 = self._update_alpha(tau_1_prev, gamma_1, alpha_1)
-            alpha_2 = self._update_alpha(tau_2_prev, gamma_2, alpha_2)
-            eta = self._update_eta(tau_1_prev, tau_2_prev, data, eta_init)
+            tau_1 = self._update_tau(alpha_1, gamma_1, eta, rho_1, tau_1_prev, data, row_category_matrix)
+            tau_2 = self._update_tau(alpha_2, gamma_2, eta, rho_2, tau_2_prev, data, col_category_matrix)
+            gamma_1 = self._update_gamma(gamma_1, tau_1, alpha_1, row_category_matrix)
+            gamma_2 = self._update_gamma(gamma_2, tau_2, alpha_2, col_category_matrix)
+            rho_1 = self._update_rho(rho_1_init, tau_1)
+            rho_2 = self._update_rho(rho_2_init, tau_2)
+            alpha_1 = self._update_alpha(tau_1, gamma_1, alpha_1)
+            alpha_2 = self._update_alpha(tau_2, gamma_2, alpha_2)
+            eta = self._update_eta(tau_1, tau_2, data, eta_init)
 
             # 各パラメータの値を履歴として保存
             tau_1_history.append(tau_1.copy())
