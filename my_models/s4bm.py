@@ -67,7 +67,7 @@ class S4BM:
         ro = np.sum(data == 0) / total_links  # リンクなしの割合
         return rp, rn, ro
     
-    def _initialize_parameters(self,data, N, K, M):
+    def _initialize_parameters(self,data, N, K, M, C):
         """
         パラメータtau, gamma, mu, eta, rho, alphaの初期化
         data: 隣接行列
@@ -80,6 +80,15 @@ class S4BM:
         tau = self.rng.rand(N, K)  # N×Kの一様分布からのサンプリング
         gamma = self.rng.rand(N, M)  # N×Mの一様分布からのサンプリング
         alpha = self.rng.rand(M, K)  # M×Kの一様分布からのサンプリング
+
+        for i in range(N):
+            if np.sum(C[i]) > 0:
+                tau[i] = C[i]
+                
+        # カテゴリ行列Cが与えられている場合、対応するgammaの行を置き換える
+        for i in range(N):
+            if np.sum(C[i]) > 0:
+                gamma[i] = C[i]
 
         rho = np.ones(K)  # 各要素が1のK次元ベクトルrho0
 
@@ -104,7 +113,7 @@ class S4BM:
         n_nodes = data.shape[0]
 
 
-        tau, gamma, alpha, rho0, mu0_1, eta0_1, mu0_2, eta0_2 = self._initialize_parameters(data, n_nodes, n_blocks, C.shape[1])
+        tau, gamma, alpha, rho0, mu0_1, eta0_1, mu0_2, eta0_2 = self._initialize_parameters(data, n_nodes, n_blocks, C.shape[1], C)
         
         rho = rho0
         mu1 = mu0_1
@@ -288,40 +297,39 @@ class S4BM:
     
     def _update_gamma(self, gamma, tau, alpha, C):
         """
-        各ノードとラベルに対するγ（ガンマ）確率を更新する関数。
+        提案手法に基づいてγ（ガンマ）確率を更新する関数。
 
-        パラメータ:
+        Parameters:
+        - gamma (numpy.ndarray): γの初期値、形状は (N, M)。
+        - tau (numpy.ndarray): τ確率の行列、形状は (N, K)。ノードが各ブロックに属する確率を示す。
         - alpha (numpy.ndarray): αパラメータの行列で、形状は (M, K)。ラベルとブロックの関連性を示す。
-        - tau (numpy.ndarray): τ確率の行列で、形状は (N, K)。ノードが各ブロックに属する確率を示す。
+        - C (numpy.ndarray): カテゴリ行列、形状は (N, M)。
 
-        戻り値:
+        Returns:
         - numpy.ndarray: 更新されたγ行列で、形状は (N, M)。
         """
-        # 各ノードとラベルに対して指数部分を計算
-        N, K = tau.shape             
+        N, K = tau.shape
         M = alpha.shape[0]
-        
 
         for i in range(N):
             for c in range(M):
-                top = 0
-                for k_ in range(K):
-                    top += alpha[c, k_] * (1.0 / tau[i, k_])
-                top = np.exp(top)
+                numerator = np.exp(np.sum(alpha[c, :] * tau[i, :]) - 1)
+                
+                denominator = np.sum([
+                    np.sum(tau[i, :] * np.exp(alpha[c_prime, :]))
+                    for c_prime in range(M)
+                ])
+                
+                gamma[i, c] = numerator / denominator
 
-                bottom = 0
-                for c_ in range(M):
-                    for k_ in range(K):
-                        bottom += tau[i,k_] * np.exp(alpha[c_, k_])
-                gamma[i, c] = top / bottom
-
+        # カテゴリ行列Cが与えられている場合、対応するgammaの行を置き換える
         for i in range(N):
             if np.sum(C[i]) > 0:
                 gamma[i] = C[i]
 
         # 確率として正規化
         gamma /= np.sum(gamma, axis=1, keepdims=True)
-        
+
         return gamma
 
 
@@ -406,38 +414,50 @@ class S4BM:
         mu /= np.sum(mu)
         return mu
     
-    def _update_alpha(self, tau, gamma, alpha, learning_rate=0.01, iterations=100):
+    def _update_alpha(self, tau, gamma, alpha, learning_rate=0.01, iterations=100, tol=1e-6):
         """
-        カテゴリとブロック間の関係パラメータαを式(15)に基づいて更新する関数。
+        提案手法に基づいてカテゴリとブロック間の関係パラメータαを更新する関数。
 
-        パラメータ:
-        - tau: 各ノードが各ブロックに属する確率、形状は(n_nodes, n_blocks)。
-        - gamma: 各ノードが各カテゴリに属する確率、形状は(n_nodes, n_categories)。
-        - alpha: カテゴリとブロック間の初期関係パラメータ、形状は(n_categories, n_blocks)。
+        Parameters:
+        - tau: 各ノードが各ブロックに属する確率、形状は(n_objects, num_clusters)。
+        - gamma: 各ノードが各カテゴリに属する確率、形状は(n_objects, num_categories)。
+        - alpha: カテゴリとブロック間の初期関係パラメータ、形状は(num_categories, num_clusters)。
         - learning_rate: 勾配降下法の学習率。
-        - iterations: 勾配降下法の反復回数。
+        - iterations: 勾配降下法の最大反復回数。
+        - tol: 収束判定のための許容誤差。デフォルトは1e-6。
 
-        戻り値:
+        Returns:
         - alpha: 更新されたカテゴリとブロック間の関係パラメータ。
         """
         M, K = alpha.shape
         N = tau.shape[0]
         
-        for _ in range(iterations):
+        for iteration in range(iterations):
             gradient = np.zeros_like(alpha)  # 勾配を初期化
+            alpha_old = alpha.copy()  # 以前のalphaを保存
             
-            # alphaの勾配を計算
             for c in range(M):
                 for k in range(K):
+                    numerator = 0
+                    denominator = 0
+                    
                     for i in range(N):
-                        bottom = 0
-                        for c_ in range(M):
-                            for k_ in range(K):
-                                bottom += tau[i, k_] * np.exp(alpha[c_, k_])
-                        gradient[c, k] += gamma[i, c] * ((tau[i, k] - (tau[i, k] * np.exp(alpha[c, k]))) / bottom)
+                        numerator += gamma[i, c] * (tau[i, k] - tau[i, k] * np.exp(alpha[c, k]))
+                        
+                        # denominator を計算
+                        denominator += np.sum([tau[i, k_] * np.exp(alpha[c_prime, k_]) for c_prime in range(M) for k_ in range(K)])
+                    
+                    gradient[c, k] = numerator / denominator
             
             # 勾配降下法を使用してalphaを更新
             alpha += learning_rate * gradient
+
+            # 収束判定：alphaの変化が許容誤差未満なら終了
+            if np.linalg.norm(alpha - alpha_old) < tol:
+                print(f"Alpha has converged after {iteration + 1} iterations.")
+                break
         
-        alpha /= np.sum(alpha)
+        # αを正規化
+        alpha /= np.sum(alpha, axis=1, keepdims=True)
+
         return alpha
