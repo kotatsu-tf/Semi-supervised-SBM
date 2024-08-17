@@ -116,7 +116,18 @@ class PrMethod:
         n_objects = (data.shape[0], data.shape[1])
 
         # パラメータの初期化
-        tau_1, tau_2, gamma_1, gamma_2, alpha_1, alpha_2, rho_1_init, rho_2_init, eta_init = self._initialize_parameters(data, n_objects, num_cluster_1, num_cluster_2)
+        tau_1_init, tau_2_init, gamma_1_init, gamma_2_init, alpha_1_init, alpha_2_init, rho_1_init, rho_2_init, eta_init = self._initialize_parameters(data, n_objects, num_cluster_1, num_cluster_2)
+        # _initを外した変数に値を代入
+        tau_1 = tau_1_init.copy()
+        tau_2 = tau_2_init.copy()
+        gamma_1 = gamma_1_init.copy()
+        gamma_2 = gamma_2_init.copy()
+        alpha_1 = alpha_1_init.copy()
+        alpha_2 = alpha_2_init.copy()
+        rho_1 = rho_1_init.copy()
+        rho_2 = rho_2_init.copy()
+        eta = eta_init.copy()
+
 
         # パラメータ履歴の保存用リスト
         tau_1_history = []
@@ -129,7 +140,7 @@ class PrMethod:
         rho_2_history = []
         eta_history = []
 
-        previous_elbo = self._calculate_elbo(data, tau_1, tau_2, gamma_1, gamma_2, alpha_1, alpha_2, rho_1_init, rho_2_init, eta_init)
+        # previous_elbo = self._calculate_elbo(data, tau_1, tau_2, gamma_1, gamma_2, alpha_1, alpha_2, rho_1_init, rho_2_init, eta_init)
 
         for iteration in range(self.max_iter):
             # 前回のパラメータを保存
@@ -137,15 +148,15 @@ class PrMethod:
             tau_2_prev = tau_2.copy()
 
             # パラメータの更新（初期化時のrho_1_init, rho_2_init, eta_initを使用）
-            tau_1 = self._update_tau(alpha_1, gamma_1, eta, rho_1, tau_1_prev, data, row_category_matrix)
-            tau_2 = self._update_tau(alpha_2, gamma_2, eta, rho_2, tau_2_prev, data, col_category_matrix)
+            tau_1 = self._update_tau_row(alpha_1, gamma_1, eta, rho_1, tau_1_prev, tau_2, data, row_category_matrix)
+            tau_2 = self._update_tau_col(alpha_2, gamma_2, eta, rho_2, tau_2_prev, tau_1, data, col_category_matrix)
             gamma_1 = self._update_gamma(gamma_1, tau_1, alpha_1, row_category_matrix)
             gamma_2 = self._update_gamma(gamma_2, tau_2, alpha_2, col_category_matrix)
             rho_1 = self._update_rho(rho_1_init, tau_1)
             rho_2 = self._update_rho(rho_2_init, tau_2)
+            eta = self._update_eta(tau_1, tau_2, data, eta_init)
             alpha_1 = self._update_alpha(tau_1, gamma_1, alpha_1)
             alpha_2 = self._update_alpha(tau_2, gamma_2, alpha_2)
-            eta = self._update_eta(tau_1, tau_2, data, eta_init)
 
             # 各パラメータの値を履歴として保存
             tau_1_history.append(tau_1.copy())
@@ -256,52 +267,47 @@ class PrMethod:
         # ダミー
         return np.random.rand()
 
-    def _update_tau(self, alpha, gamma, eta, mu, rho, tau, data, C):
+    def _update_tau_row(self, alpha, gamma, eta, rho, tau_prev, tau_col, data, C):
         """
-        各ノードが各ブロックに属する確率τ（タウ）を更新する関数。
+        行側の各ノードが各ブロックに属する確率τ（タウ）を更新する関数。
 
-        パラメータ:
+        Parameters:
         - alpha (numpy.ndarray): ラベルとブロックの関連性を示すパラメータ、形状は (M, K)
         - gamma (numpy.ndarray): γ確率の行列、形状は (N, M)
-        - eta (numpy.ndarray): リンクが存在する確率、形状は (3,) (正、負、無リンク)
-        - mu (numpy.ndarray): 異なるブロック間のリンクが存在する確率、形状は (3,)
-        - rho (numpy.ndarray): 各ブロックの比率、形状は (K,)
-        - tau (numpy.ndarray): 各ノードが各ブロックに属する確率を表す配列、形状は (N, K)
-        - data (numpy.ndarray): 隣接行列、形状は (N, N)
+        - eta (numpy.ndarray): ブロック間リンクの存在確率、形状は (K, L, 3)
+        - rho (numpy.ndarray): 各ブロックの比率、形状は (K)
+        - tau_prev (numpy.ndarray): 前回の更新時のτ、形状は (N, K)
+        - tau_col (numpy.ndarray): 列側のτ、形状は (N, L)
+        - data (numpy.ndarray): ネットワークの隣接行列、形状は (n_objects_row, n_objects_col)。要素は1, -1, 0。
+        - C (numpy.ndarray): カテゴリ行列、形状は (N, M)
 
-        戻り値:
+        Returns:
         - numpy.ndarray: 更新されたτ行列、形状は (N, K)
         """
-        N, K = tau.shape
+        N, K = tau_prev.shape
+        L = tau_col.shape[1]
         log_tau = np.zeros((N, K))
 
         log_rho = digamma(rho) - digamma(np.sum(rho))
         beta = np.sum(np.exp(alpha), axis=0)
-        
+
         for i in range(N):
             for k in range(K):
                 log_tau_ik = log_rho[k]
+                log_tau_ik += np.sum([
+                    gamma[i, c] * (alpha[c, k] - (1.0 / np.dot(beta, tau_prev[i].T)) * beta[k])
+                    for c in range(gamma.shape[1])
+                ])
 
-                for c in range(gamma.shape[1]):
-                    log_tau_ik += gamma[i, c] * (alpha[c, k] - (1.0 / np.dot(beta, tau[i].T)) * beta[k])
-
-                for j in range(N):
-                    if i != j:
-                        if data[i, j] == 1:
-                            log_tau_ik += tau[j, k] * (digamma(eta[0]) - digamma(np.sum(eta)))
-                        elif data[i, j] == -1:
-                            log_tau_ik += tau[j, k] * (digamma(eta[1]) - digamma(np.sum(eta)))
-                        else:
-                            log_tau_ik += tau[j, k] * (digamma(eta[2]) - digamma(np.sum(eta)))
-
-                        for l in range(K):
-                            if k != l:
-                                if data[i, j] == 1:
-                                    log_tau_ik += tau[j, l] * (digamma(mu[0]) - digamma(np.sum(mu)))
-                                elif data[i, j] == -1:
-                                    log_tau_ik += tau[j, l] * (digamma(mu[1]) - digamma(np.sum(mu)))
-                                else:
-                                    log_tau_ik += tau[j, l] * (digamma(mu[2]) - digamma(np.sum(mu)))
+                for j in range(tau_col.shape[0]):  # 列方向の処理
+                    data_ij = data[i, j]
+                    for l in range(eta.shape[1]):
+                        if data_ij == 1:
+                            log_tau_ik += tau_col[j, l] * (digamma(eta[k, l, 0]) - digamma(np.sum(eta[k, l, :])))
+                        elif data_ij == -1:
+                            log_tau_ik += tau_col[j, l] * (digamma(eta[k, l, 1]) - digamma(np.sum(eta[k, l, :])))
+                        elif data_ij == 0:
+                            log_tau_ik += tau_col[j, l] * (digamma(eta[k, l, 2]) - digamma(np.sum(eta[k, l, :])))
 
                 log_tau[i, k] = log_tau_ik
 
@@ -310,7 +316,7 @@ class PrMethod:
 
         # exp を取る前に数値安定化
         tau = np.exp(log_tau)
-        
+
         epsilon = 0.01
         for i in range(N):
             if np.sum(C[i]) > 0:
@@ -322,8 +328,67 @@ class PrMethod:
 
         return tau
 
+    def _update_tau_col(self, alpha, gamma, eta, rho, tau_prev, tau_row, data, C):
+        """
+        列側の各ノードが各ブロックに属する確率τ（タウ）を更新する関数。
 
-    
+        Parameters:
+        - alpha (numpy.ndarray): ラベルとブロックの関連性を示すパラメータ、形状は (M, L)
+        - gamma (numpy.ndarray): γ確率の行列、形状は (N, M)
+        - eta (numpy.ndarray): ブロック間リンクの存在確率、形状は (K, L, 3)
+        - rho (numpy.ndarray): 各ブロックの比率、形状は (L)
+        - tau_prev (numpy.ndarray): 前回の更新時のτ、形状は (N, L)
+        - tau_row (numpy.ndarray): 行側のτ、形状は (N, K)
+        - data (numpy.ndarray): ネットワークの隣接行列、形状は (n_objects_row, n_objects_col)。要素は1, -1, 0。
+        - C (numpy.ndarray): カテゴリ行列、形状は (N, M)
+
+        Returns:
+        - numpy.ndarray: 更新されたτ行列、形状は (N, L)
+        """
+        N, L = tau_prev.shape
+        K = tau_row.shape[1]
+        log_tau = np.zeros((N, L))
+
+        log_rho = digamma(rho) - digamma(np.sum(rho))
+        beta = np.sum(np.exp(alpha), axis=0)
+
+        for j in range(N):
+            for l in range(L):
+                log_tau_jl = log_rho[l]
+                log_tau_jl += np.sum([
+                    gamma[j, c] * (alpha[c, l] - (1.0 / np.dot(beta, tau_prev[j].T)) * beta[l])
+                    for c in range(gamma.shape[1])
+                ])
+
+                for i in range(tau_row.shape[0]):  # 行方向の処理
+                    data_ji = data[i, j]
+                    for k in range(eta.shape[0]):
+                        if data_ji == 1:
+                            log_tau_jl += tau_row[i, k] * (digamma(eta[k, l, 0]) - digamma(np.sum(eta[k, l, :])))
+                        elif data_ji == -1:
+                            log_tau_jl += tau_row[i, k] * (digamma(eta[k, l, 1]) - digamma(np.sum(eta[k, l, :])))
+                        elif data_ji == 0:
+                            log_tau_jl += tau_row[i, k] * (digamma(eta[k, l, 2]) - digamma(np.sum(eta[k, l, :])))
+
+                log_tau[j, l] = log_tau_jl
+
+        # 数値安定化のため、各行の最大値を引く
+        log_tau -= np.max(log_tau, axis=1, keepdims=True)
+
+        # exp を取る前に数値安定化
+        tau = np.exp(log_tau)
+
+        epsilon = 0.01
+        for j in range(N):
+            if np.sum(C[j]) > 0:
+                tau[j] = C[j]
+        tau = np.maximum(tau, epsilon)
+
+        # 正規化
+        tau /= np.sum(tau, axis=1, keepdims=True)
+
+        return tau
+
     def _update_gamma(self, gamma, tau, alpha, C):
         """
         提案手法に基づいてγ（ガンマ）確率を更新する関数。
