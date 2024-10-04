@@ -4,7 +4,7 @@ from my_models import S4BM
 from my_models import PrMethod
 
 # CSVファイルのパスを指定
-file_path = 'data/input/artificial_bipartite_data 1.csv'
+file_path = 'data/input/artificial_bipartite_data1.csv'
 
 # CSVファイルを読み込んでNumPy配列に変換
 data = np.loadtxt(file_path, delimiter=',')
@@ -17,7 +17,7 @@ data = np.loadtxt(file_path, delimiter=',')
 #     [96, 97, 98, 99, 100, 101, 102, 103]
 #     )
 categories_row=([],[])
-categories_col=([0,2,5,6],[7,12,17,18],[1,3,4,9])
+categories_col=([0,2,5],[7,12,17],[1,3,4])
 
 # # カテゴリの順列を生成
 permutations = list(itertools.permutations(categories_col))
@@ -25,7 +25,7 @@ permutations = list(itertools.permutations(categories_col))
 # 各順列に対してモデルを実行
 for rs in range(1):
     for perm in permutations:
-        model = PrMethod(max_iter=10, num_cluster_k=2, num_cluster_l=3, random_state=rs)
+        model = PrMethod(max_iter=10, num_cluster_k=2, num_cluster_l=3, random_state=7)
         cluster_k, clusetr_l = model.fit_transform(data, categories_row, perm)
         print("------------------------Result------------------------")
         print("model=" + str(model))
