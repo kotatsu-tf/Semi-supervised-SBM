@@ -150,20 +150,32 @@ def visualize_matrix(matrix, output_dir, filename):
 def cal_NMI(true_label, pred_label):
     return normalized_mutual_info_score(true_label, pred_label)
 
-def append_nmi_to_csv(file_path, data_size, nmi_value):
+import os
+import time
+
+def append_nmi_to_csv(file_path, data_size, row_nmi_value, col_nmi_value, seed, categories_row_num, categories_col_num, categories_row, categories_col, execution_time):
     """
     NMIの結果を指定のファイルに追記する関数。
     
     Parameters:
     - file_path (str): 保存するファイルのパス
     - data_size (tuple): データサイズ (n_row, n_col) のタプル
-    - nmi_value (float): 計算したNMI値
+    - row_nmi_value (float): 計算した行方向NMI値
+    - col_nmi_value (float): 計算した列方向NMI値
+    - seed (int): モデルのseed値
+    - categories_row (tuple): 第1ドメインの教師情報
+    - categories_col (list): 第2ドメインの教師情報
+    - execution_time (float): 実行時間 (秒単位)
     """
     # ファイルが存在しない場合はヘッダーを付けて新規作成
     if not os.path.exists(file_path):
         with open(file_path, 'w') as f:
-            f.write('data_size,nmi_value\n')
+            f.write('data_size,row_nmi_value,col_nmi_value,seed,categories_row_num,categories_col_num,categories_row,categories_col,execution_time\n')
+    
+    # categories_rowとcategories_colを文字列に変換
+    categories_row_str = str(categories_row)
+    categories_col_str = str(categories_col)
     
     # データを追記
     with open(file_path, 'a') as f:
-        f.write(f'{data_size[0]}x{data_size[1]},{nmi_value}\n')
+        f.write(f'{data_size[0]}x{data_size[1]},{row_nmi_value},{col_nmi_value},{seed},{categories_row_num},{categories_col_num},"{categories_row_str}","{categories_col_str}",{execution_time:.2f}\n')
